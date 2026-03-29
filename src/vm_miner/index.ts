@@ -158,37 +158,9 @@ bc.onmessage = ({ data }: MessageEvent<FromWorker>) => {
 	}
 }
 
-export async function randomx_benchmark_become_miner() {
-	// hardcoded at the moment
+export async function mine(job: Job) {
 	const config: Config = {}
 	const st = await main_new_state(config)
-
-	const job: Job = {
-		"blob": "1010f7f2e4b70618f1fe647153b5a337098080ed8f90eee987ad4dd78bc0f3aa59bf3a53c991660000000081b6ec64f730565a0ac1dd619427aa884bf4cf8aeef7f901b00074d8390c075847",
-		"job_id": "785297",
-		"target": "ffff0000",
-		"height": 3248070,
-		"seed_hash": "3b0d5af1cdc3827e2f42f03e93661a252086f8d4e35dc65a9d3ea48e240cc795"
-	}
 
 	on_job(st, job)
 }
-
-// attempt to become main
-/* navigator.locks.request('the CLAW!!', async (lock) => {
-	// hardcoded at the moment
-	const config: Config = {}
-	const st = await main_new_state(config)
-
-	const job: Job = {
-		"blob": "1010f7f2e4b70618f1fe647153b5a337098080ed8f90eee987ad4dd78bc0f3aa59bf3a53c991660000000081b6ec64f730565a0ac1dd619427aa884bf4cf8aeef7f901b00074d8390c075847",
-		"job_id": "785297",
-		"target": "ffffff00",
-		"height": 3248070,
-		"seed_hash": "3b0d5af1cdc3827e2f42f03e93661a252086f8d4e35dc65a9d3ea48e240cc795"
-	}
-
-	on_job(st, job)
-}).finally(() => {
-	bc.close()
-}) */
