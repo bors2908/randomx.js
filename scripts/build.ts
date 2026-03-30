@@ -139,7 +139,6 @@ async function compile_for(PATH: string, INDICES: string[]) {
 	await Promise.all([
         await esbuild.build({
             ...opt,
-            entryPoints: ['src/web.ts'],   // make this a real public entry file
             bundle: true,
             outdir: `${PATH}/dist/web`,
             target: ['chrome91', 'firefox89', 'safari16'],
