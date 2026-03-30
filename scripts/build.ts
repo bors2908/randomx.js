@@ -137,18 +137,39 @@ async function compile_for(PATH: string, INDICES: string[]) {
 	}
 
 	await Promise.all([
-		esbuild.build({
-			...opt,
-			outdir: `${PATH}/dist/web`,
-			target: ['chrome91', 'firefox89', 'safari16'],
-			platform: 'browser',
-			format: 'esm',
-			define: {
-				INSTRUMENT: JSON.stringify(INSTRUMENT),
-				ENVIRONMENT: '"browser"',
-				FORMAT: '"esm"',
-			}
-		}),
+        await esbuild.build({
+            ...opt,
+            entryPoints: ['src/web.ts'],   // make this a real public entry file
+            bundle: true,
+            outdir: `${PATH}/dist/web`,
+            target: ['chrome91', 'firefox89', 'safari16'],
+            platform: 'browser',
+            format: 'esm',
+            splitting: true,
+            sourcemap: true,
+
+            // readable debug output
+            keepNames: true,
+            minify: false,
+
+            define: {
+                INSTRUMENT: JSON.stringify(INSTRUMENT),
+                ENVIRONMENT: '"browser"',
+                FORMAT: '"esm"',
+            },
+
+            // bundle assets you import directly
+            loader: {
+                '.wasm': 'file',
+                '.png': 'file',
+                '.jpg': 'file',
+                '.svg': 'file',
+                '.woff2': 'file',
+            },
+            assetNames: 'assets/[name]-[hash]',
+            chunkNames: 'chunks/[name]-[hash]',
+            entryNames: '[dir]/[name]',
+        }),
 
 		esbuild.build({
 			...opt,
