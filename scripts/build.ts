@@ -155,19 +155,7 @@ async function compile_for(PATH: string, INDICES: string[]) {
                 INSTRUMENT: JSON.stringify(INSTRUMENT),
                 ENVIRONMENT: '"browser"',
                 FORMAT: '"esm"',
-            },
-
-            // bundle assets you import directly
-            loader: {
-                '.wasm': 'file',
-                '.png': 'file',
-                '.jpg': 'file',
-                '.svg': 'file',
-                '.woff2': 'file',
-            },
-            assetNames: 'assets/[name]-[hash]',
-            chunkNames: 'chunks/[name]-[hash]',
-            entryNames: '[dir]/[name]',
+            }
         }),
 
 		esbuild.build({
