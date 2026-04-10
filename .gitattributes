@@ -1,4 +1,8 @@
 *.h linguist-language=C
+*.sh text eol=lf
+*.ts text eol=lf
+*.bat text eol=crlf
+*.jar binary
 media/*.wat linguist-vendored
 include/nanoprintf.h linguist-vendored
 include/wasm_simd128_polyfill.h linguist-vendored
