@@ -40,7 +40,11 @@ function iterate() {
 		switch (jit_size) {
 			case 0:
 			// exhausted nonce space
-			console.log(miner_id, `job ${job.job_id} exhausted nonce space`)
+			bc.postMessage({
+				type: 'event_nonce_space_exhausted',
+				minerId: miner_id,
+				jobId: job.job_id,
+			} satisfies FromWorker)
 			job = null
 			break outer
 		case 1:
@@ -53,7 +57,15 @@ function iterate() {
 				result: scratch.slice(0, 32), // R = Hash256()
 			}
 
-			console.log(miner_id, `found after ${vm_exports.h()} hashes, nonce ${result.nonce} result ${scratch.slice(0, 32)}`)
+			const hash_count = vm_exports.h()
+			bc.postMessage({
+				type: 'event_result_found',
+				minerId: miner_id,
+				jobId: job.job_id,
+				hashCount: hash_count,
+				nonce: result.nonce,
+				result: result.result,
+			} satisfies FromWorker)
 
 			bc.postMessage(result satisfies FromWorker)
 			job = null
@@ -104,7 +116,10 @@ function message({ data }: MessageEvent<ToWorker | WorkerMessageResult>) {
 		}
 		job = null
 	} else if (data.type === 'dispose') {
-		console.log(miner_id, 'disposing job')
+		bc.postMessage({
+			type: 'event_job_disposed',
+			minerId: miner_id,
+		} satisfies FromWorker)
 		job = null
 	} else if (data.type === 'mine') {
 		const was_mining = !!job
@@ -114,7 +129,14 @@ function message({ data }: MessageEvent<ToWorker | WorkerMessageResult>) {
 		const nonce_space = job.work_allocation[miner_id]
 
 		// begin mining, reinitialise everything
-		console.log(miner_id, `job ${job.job_id} nonce space [${nonce_space.nonce}, ${nonce_space.nonce_end}), target ${job.target}`)
+		bc.postMessage({
+			type: 'event_job_started',
+			minerId: miner_id,
+			jobId: job.job_id,
+			nonceStart: nonce_space.nonce,
+			nonceEnd: nonce_space.nonce_end,
+			target: job.target,
+		} satisfies FromWorker)
 		scratch.set(job.blob)
 		vm_exports.B(job.blob.length, job.target, nonce_space.nonce, nonce_space.nonce_end)
 

@@ -2,6 +2,12 @@ import type { JitFeature } from "../detect/detect"
 
 export const bc = new BroadcastChannel('12313131 miner channel')
 
+export type StatsRow = {
+	'miner id': string | undefined
+	'hashes per second': string
+	'total hashes': string
+}
+
 export type Config = {
 	target_threads?: number
 }
@@ -126,6 +132,52 @@ export type ToWorker =
 export type FromWorker =
 	| WorkerMessageResult
 	| WorkerPong
+	| WorkerEventCacheInitStart
+	| WorkerEventCacheInitEnd
+	| WorkerEventJobStarted
+	| WorkerEventJobDisposed
+	| WorkerEventNonceSpaceExhausted
+	| WorkerEventResultFound
+
+export type WorkerEventCacheInitStart = {
+	type: 'event_cache_init_start'
+	message: string
+}
+
+export type WorkerEventCacheInitEnd = {
+	type: 'event_cache_init_end'
+	message: string
+	durationMs: number
+}
+
+export type WorkerEventJobStarted = {
+	type: 'event_job_started'
+	minerId: string
+	jobId: string
+	nonceStart: number
+	nonceEnd: number
+	target: bigint
+}
+
+export type WorkerEventJobDisposed = {
+	type: 'event_job_disposed'
+	minerId: string
+}
+
+export type WorkerEventNonceSpaceExhausted = {
+	type: 'event_nonce_space_exhausted'
+	minerId: string
+	jobId: string
+}
+
+export type WorkerEventResultFound = {
+	type: 'event_result_found'
+	minerId: string
+	jobId: string
+	hashCount: number
+	nonce: number
+	result: Uint8Array
+}
 
 export type WorkerMessageInit = {
 	type: 'init'

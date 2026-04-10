@@ -1,5 +1,5 @@
 import { internal_create_module, internal_get_cached_vm_handle, internal_initialise, randomx_init_cache, RxCache, type DatasetModule, type RxCacheHandle } from '../dataset/dataset';
-import { bc, hex2bin, hex2target, sleep, type Config, type FromWorker, type Job, type NonceSpace, type ToWorker, type WorkerMessageInit, type WorkerMessageMine, type WorkerMessageNewCache, type WorkerPong } from './util';
+import { bc, hex2bin, hex2target, sleep, type Config, type FromWorker, type Job, type NonceSpace, type ToWorker, type WorkerMessageInit, type WorkerMessageMine, type WorkerMessageNewCache, type WorkerPong, type StatsRow } from './util';
 import { jit_detect } from '../detect/detect';
 import { nanoid } from 'nanoid';
 
@@ -33,21 +33,21 @@ async function main_new_state(config: Config): Promise<MainState> {
 	const cache = new WebAssembly.Memory({
 		initial: dataset_wasm_pages, maximum: dataset_wasm_pages, shared: true
 	})
-	
+
 	if (!config.target_threads) {
 		// TODO or some other method?
 		if (ENVIRONMENT === 'browser') {
 			config.target_threads = navigator.hardwareConcurrency ?? 4
 		} else {
 			// Node.js fallback
-			config.target_threads = require('os').cpus().length
+			config.target_threads = require('os').cpus().length ?? 4
 		}
 	}
 
 	const workers = new Map<string, WorkerPong | null>()
 	const vm = internal_get_cached_vm_handle()
-	
-	for (let i = 0; i < config.target_threads; i++) {
+
+	for (let i = 0; i < config.target_threads!!; i++) {
 		const worker = new Worker(worker_url)
 		const miner_id = nanoid()
 
@@ -59,10 +59,10 @@ async function main_new_state(config: Config): Promise<MainState> {
 			cache,
 			vm,
 		} satisfies WorkerMessageInit)
-		
+
 		workers.set(miner_id, null)
 	}
-	
+
 	return {
 		cache_memory: cache,
 		cache_exports: internal_create_module(cache),
@@ -75,12 +75,13 @@ function on_job(st: MainState, job: Job) {
 		const seed_hash = hex2bin(job.seed_hash)
 
 		console.log('on_job: initialising a new cache')
-		console.time('on_job: initialise cache')
+		const init_start = Date.now()
 
 		// existing 256 MiBs of cache is being reused here.
 		// this will take a while to initialise the cache
 		const rx_cache = internal_initialise(seed_hash, st.cache_memory, st.cache_exports)
-		console.timeEnd('on_job: initialise cache')
+		const init_duration = Date.now() - init_start
+		console.log(`on_job: initialise cache: ${init_duration}ms`)
 
 		st.current_job = { job, rx_cache }
 
@@ -110,7 +111,7 @@ function on_job(st: MainState, job: Job) {
 	let nonce = 0
 	for (const miner_id of miners) {
 		let nonce_end = nonce + nonce_space
-		
+
 		work_allocation[miner_id] = {
 			miner_id: miner_id,
 
@@ -138,13 +139,25 @@ let last_stats_time = Date.now()
 const stats = new Map<string, WorkerPong>()
 
 bc.onmessage = ({ data }: MessageEvent<FromWorker>) => {
-	if (data.type === 'pong') {
+	if (data.type === 'event_cache_init_start') {
+		console.log(data.message)
+	} else if (data.type === 'event_cache_init_end') {
+		console.log(`${data.message}: ${data.durationMs}ms`)
+	} else if (data.type === 'event_job_started') {
+		console.log(data.minerId, `job ${data.jobId} nonce space [${data.nonceStart}, ${data.nonceEnd}), target ${data.target}`)
+	} else if (data.type === 'event_job_disposed') {
+		console.log(data.minerId, 'disposing job')
+	} else if (data.type === 'event_nonce_space_exhausted') {
+		console.log(data.minerId, `job ${data.jobId} exhausted nonce space`)
+	} else if (data.type === 'event_result_found') {
+		console.log(data.minerId, `found after ${data.hashCount} hashes, nonce ${data.nonce} result ${data.result}`)
+	} else if (data.type === 'pong') {
 		stats.set(data.miner_id, data)
 		const now = Date.now()
 		if (now - last_stats_time >= 1000) {
 			last_stats_time = now
 
-			const table: Record<string, any>[] = []
+			const table: StatsRow[] = []
 			for (const [k, v] of stats) {
 				table.push({
 					'miner id': k,
