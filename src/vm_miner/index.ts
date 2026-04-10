@@ -36,7 +36,12 @@ async function main_new_state(config: Config): Promise<MainState> {
 	
 	if (!config.target_threads) {
 		// TODO or some other method?
-		config.target_threads = navigator.hardwareConcurrency ?? 4
+		if (ENVIRONMENT === 'browser') {
+			config.target_threads = navigator.hardwareConcurrency ?? 4
+		} else {
+			// Node.js fallback
+			config.target_threads = require('os').cpus().length
+		}
 	}
 
 	const workers = new Map<string, WorkerPong | null>()
