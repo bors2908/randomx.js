@@ -4,6 +4,7 @@ export const bc = new BroadcastChannel('12313131 miner channel')
 
 export type Config = {
 	target_threads?: number
+	callbacks?: Partial<MinerCallbacks>
 }
 
 export function sleep(ms: number): Promise<void> {
@@ -174,4 +175,15 @@ export type WorkerMessageInit = {
 	// backing SharedArrayBuffer allocated once, the thunk/ssh will be sent later
 	cache: WebAssembly.Memory
 	vm: WebAssembly.Module
+}
+
+export type MinerCallbacks = {
+	on_cache_initialising: () => void
+	on_cache_initialised: (duration_ms: number) => void
+	on_worker_ready: (event: WorkerEventWorkerReady) => void
+	on_job_started: (event: WorkerEventJobStarted) => void
+	on_job_disposed: (event: WorkerEventJobDisposed) => void
+	on_nonce_space_exhausted: (event: WorkerEventNonceSpaceExhausted) => void
+	on_result_found: (event: WorkerEventResultFound) => void
+	on_pong: (event: WorkerPong) => void
 }

@@ -1,5 +1,5 @@
 import { internal_create_module, internal_get_cached_vm_handle, internal_initialise, randomx_init_cache, RxCache, type DatasetModule, type RxCacheHandle } from '../dataset/dataset';
-import { bc, hex2bin, hex2target, sleep, type Config, type FromWorker, type Job, type NonceSpace, type ToWorker, type WorkerMessageInit, type WorkerMessageMine, type WorkerMessageNewCache, type WorkerPong } from './util';
+import { bc, hex2bin, hex2target, sleep, type Config, type FromWorker, type Job, type MinerCallbacks, type NonceSpace, type ToWorker, type WorkerMessageInit, type WorkerMessageMine, type WorkerMessageNewCache, type WorkerPong } from './util';
 import { jit_detect } from '../detect/detect';
 import { nanoid } from 'nanoid';
 
@@ -21,6 +21,7 @@ const worker_ready = new Set<string>()
 type MainState = {
 	cache_memory: WebAssembly.Memory
 	cache_exports: DatasetModule
+	callbacks: MinerCallbacks
 
 	// depends on the key K from current_job
 	current_job?: {
@@ -31,7 +32,58 @@ type MainState = {
 	workers: Map<string, { postMessage: (message: unknown) => void }>
 }
 
+function create_default_callbacks(): MinerCallbacks {
+	let last_stats_time = Date.now()
+	const stats = new Map<string, WorkerPong>()
+
+	return {
+		on_cache_initialising: () => {
+			console.log('on_job: initialising a new cache')
+		},
+		on_cache_initialised: (duration_ms) => {
+			console.log(`on_job: initialise cache: ${duration_ms}ms`)
+		},
+		on_worker_ready: () => {
+			// no-op by default
+		},
+		on_job_started: (event) => {
+			console.log(event.miner_id, `job ${event.job_id} nonce space [${event.nonce_start}, ${event.nonce_end}), target ${event.target}`)
+		},
+		on_job_disposed: (event) => {
+			console.log(event.miner_id, 'disposing job')
+		},
+		on_nonce_space_exhausted: (event) => {
+			console.log(event.miner_id, `job ${event.job_id} exhausted nonce space`)
+		},
+		on_result_found: (event) => {
+			console.log(event.miner_id, `found after ${event.hash_count} hashes, nonce ${event.nonce} result ${event.result}`)
+		},
+		on_pong: (event) => {
+			stats.set(event.miner_id, event)
+			const now = Date.now()
+			if (now - last_stats_time >= 1000) {
+				last_stats_time = now
+
+				const worker_count = stats.size
+				const total_hashrate = Array.from(stats.values()).reduce((a, b) => a + b.stats.hashes_per_second, 0)
+				const total_hashes = Array.from(stats.values()).reduce((a, b) => a + b.stats.hashes_total, 0)
+				const avg_hashrate = total_hashrate / worker_count
+
+				console.log(`Workers: ${worker_count} | Full Hashrate: ${total_hashrate.toLocaleString()} H/s | Average Worker Hashrate: ${avg_hashrate.toLocaleString()} H/s | Total Hashes: ${total_hashes.toLocaleString()}`)
+			}
+		},
+	}
+}
+
+let active_callbacks: MinerCallbacks = create_default_callbacks()
+
 async function main_new_state(config: Config): Promise<MainState> {
+	const callbacks: MinerCallbacks = {
+		...create_default_callbacks(),
+		...(config.callbacks ?? {})
+	}
+	active_callbacks = callbacks
+
 	const cache = new WebAssembly.Memory({
 		initial: dataset_wasm_pages, maximum: dataset_wasm_pages, shared: true
 	})
@@ -73,6 +125,7 @@ async function main_new_state(config: Config): Promise<MainState> {
 	return {
 		cache_memory: cache,
 		cache_exports: internal_create_module(cache),
+		callbacks,
 		workers,
 	}
 }
@@ -115,14 +168,14 @@ function on_job(st: MainState, job: Job) {
 	if (st.current_job?.job.seed_hash !== job.seed_hash) {
 		const seed_hash = hex2bin(job.seed_hash)
 
-		console.log('on_job: initialising a new cache')
+		st.callbacks.on_cache_initialising()
 		const init_start = Date.now()
 
 		// existing 256 MiBs of cache is being reused here.
 		// this will take a while to initialise the cache
 		const rx_cache = internal_initialise(seed_hash, st.cache_memory, st.cache_exports)
 		const init_duration = Date.now() - init_start
-		console.log(`on_job: initialise cache: ${init_duration}ms`)
+		st.callbacks.on_cache_initialised(init_duration)
 
 		st.current_job = { job, rx_cache }
 
@@ -174,38 +227,24 @@ function on_job(st: MainState, job: Job) {
 	postToWorkers(st, message_mine satisfies ToWorker)
 }
 
-let last_stats_time = Date.now()
-const stats = new Map<string, WorkerPong>()
-
 bc.onmessage = ({ data }: MessageEvent<FromWorker>) => {
 	if (data.type === 'event_worker_ready') {
 		worker_ready.add(data.miner_id)
+		active_callbacks.on_worker_ready(data)
 	} else if (data.type === 'event_job_started') {
-        console.log(data.miner_id, `job ${data.job_id} nonce space [${data.nonce_start}, ${data.nonce_end}), target ${data.target}`)
+		active_callbacks.on_job_started(data)
     } else if (data.type === 'event_job_disposed') {
-        console.log(data.miner_id, 'disposing job')
+		active_callbacks.on_job_disposed(data)
     } else if (data.type === 'event_nonce_space_exhausted') {
-        console.log(data.miner_id, `job ${data.job_id} exhausted nonce space`)
+		active_callbacks.on_nonce_space_exhausted(data)
     } else if (data.type === 'event_result_found') {
-        console.log(data.miner_id, `found after ${data.hash_count} hashes, nonce ${data.nonce} result ${data.result}`)
+		active_callbacks.on_result_found(data)
     } else if (data.type === 'pong') {
-        stats.set(data.miner_id, data)
-        const now = Date.now()
-        if (now - last_stats_time >= 1000) {
-            last_stats_time = now
-
-            const workerCount = stats.size
-            const totalHashrate = Array.from(stats.values()).reduce((a, b) => a + b.stats.hashes_per_second, 0)
-            const totalHashes = Array.from(stats.values()).reduce((a, b) => a + b.stats.hashes_total, 0)
-            const avgHashrate = totalHashrate / workerCount
-
-            console.log(`Workers: ${workerCount} | Full Hashrate: ${totalHashrate.toLocaleString()} H/s | Average Worker Hashrate: ${avgHashrate.toLocaleString()} H/s | Total Hashes: ${totalHashes.toLocaleString()}`)
-        }
+		active_callbacks.on_pong(data)
     }
 }
 
-export async function mine(job: Job) {
-	const config: Config = {}
+export async function mine(job: Job, config: Config = {}) {
 	const st = await main_new_state(config)
 
 	on_job(st, job)
