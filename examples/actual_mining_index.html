@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>RandomX Actual Mining</title>
+	<style>
+		body {
+			font-family: monospace;
+			max-width: 900px;
+			margin: 40px auto;
+			padding: 20px;
+			background-color: #1e1e1e;
+			color: #d4d4d4;
+		}
+		h1 {
+			color: #569cd6;
+		}
+		#status {
+			margin: 20px 0;
+			padding: 10px;
+			background-color: #252526;
+			border-left: 4px solid #007acc;
+			border-radius: 4px;
+		}
+		#logs {
+			background-color: #252526;
+			padding: 15px;
+			border-radius: 4px;
+			max-height: 600px;
+			overflow-y: auto;
+			margin-top: 20px;
+			border: 1px solid #3e3e42;
+		}
+		.log-entry {
+			margin: 2px 0;
+			padding: 2px 4px;
+			font-size: 11px;
+			line-height: 1.4;
+		}
+		.log-error {
+			color: #f48771;
+		}
+		.log-info {
+			color: #6a9955;
+		}
+		.log-event {
+			color: #9cdcfe;
+		}
+		.log-stats {
+			color: #ce9178;
+		}
+		button {
+			background-color: #007acc;
+			color: white;
+			border: none;
+			padding: 10px 20px;
+			border-radius: 4px;
+			cursor: pointer;
+			font-size: 14px;
+			margin-right: 10px;
+		}
+		button:hover {
+			background-color: #005a9e;
+		}
+		button:disabled {
+			background-color: #5a5a5a;
+			cursor: not-allowed;
+		}
+	</style>
+</head>
+<body>
+	<h1>⛏️ RandomX Actual Mining (Browser)</h1>
+	
+	<div id="status">
+		<strong>Status:</strong> <span id="statusText">Loading...</span>
+	</div>
+
+	<div>
+		<button id="startBtn" onclick="startMining()" disabled>Start Mining</button>
+		<button id="stopBtn" onclick="stopMining()" disabled>Stop Mining</button>
+	</div>
+
+	<div id="logs"></div>
+
+	<script type="module">
+		import { mine } from './lib.js'
+
+		window.mine = mine
+		window.isMining = false
+
+		// Job payload from randomx_miner.js
+		window.job = {
+			"blob": "1010f7f2e4b70618f1fe647153b5a337098080ed8f90eee987ad4dd78bc0f3aa59bf3a53c991660000000081b6ec64f730565a0ac1dd619427aa884bf4cf8aeef7f901b00074d8390c075847",
+			"job_id": "785297",
+			"target": "ffff0000",
+			"height": 3248070,
+			"seed_hash": "3b0d5af1cdc3827e2f42f03e93661a252086f8d4e35dc65a9d3ea48e240cc795"
+		}
+
+		// Intercept console methods
+		const originalLog = console.log
+		const originalTable = console.table
+		const originalError = console.error
+
+		window.addLog = function(message, type = 'info') {
+			const logsDiv = document.getElementById('logs')
+			const entry = document.createElement('div')
+			entry.className = `log-entry log-${type}`
+			entry.textContent = message
+			logsDiv.appendChild(entry)
+			logsDiv.scrollTop = logsDiv.scrollHeight
+		}
+
+		console.log = function(...args) {
+			const message = args.join(' ')
+			originalLog.apply(console, args)
+			window.addLog(message, 'info')
+		}
+
+		console.table = function(data) {
+			originalTable.apply(console, arguments)
+			if (Array.isArray(data)) {
+				data.forEach(row => {
+					if (typeof row === 'object') {
+						const line = Object.entries(row)
+							.map(([k, v]) => `${k}: ${v}`)
+							.join(' | ')
+						window.addLog(line, 'stats')
+					}
+				})
+			}
+		}
+
+		console.error = function(...args) {
+			const message = args.join(' ')
+			originalError.apply(console, args)
+			window.addLog(message, 'error')
+		}
+
+		// Update status
+		function updateStatus(text) {
+			document.getElementById('statusText').textContent = text
+		}
+
+		window.startMining = async function() {
+			if (window.isMining) return
+			window.isMining = true
+			
+			document.getElementById('startBtn').disabled = true
+			document.getElementById('stopBtn').disabled = false
+			document.getElementById('logs').innerHTML = ''
+			
+			updateStatus('Mining started...')
+			window.addLog('🚀 Starting mining job #' + window.job.job_id, 'event')
+			window.addLog('Height: ' + window.job.height + ', Target: ' + window.job.target, 'info')
+			
+			try {
+				window.mine(window.job).catch((e) => {
+					console.error('Mining error: ' + (e.message || String(e)))
+					updateStatus('Error: ' + (e.message || String(e)))
+					window.isMining = false
+					document.getElementById('startBtn').disabled = false
+					document.getElementById('stopBtn').disabled = true
+				})
+			} catch (e) {
+				console.error('Mining error: ' + (e.message || String(e)))
+				updateStatus('Error: ' + (e.message || String(e)))
+				window.isMining = false
+				document.getElementById('startBtn').disabled = false
+				document.getElementById('stopBtn').disabled = true
+			}
+		}
+
+		window.stopMining = function() {
+			window.isMining = false
+			document.getElementById('startBtn').disabled = false
+			document.getElementById('stopBtn').disabled = true
+			updateStatus('Mining stopped by user')
+			window.addLog('⏹️ Mining stopped', 'event')
+		}
+
+		// Ready
+		updateStatus('Ready')
+		document.getElementById('startBtn').disabled = false
+		window.addLog('✅ Page loaded, web bundle initialized', 'info')
+		window.addLog(`Job: #${window.job.job_id}, Seed: ${window.job.seed_hash.substring(0, 16)}...`, 'info')
+		window.addLog('Click "Start Mining" to begin', 'event')
+	</script>
+</body>
+</html>

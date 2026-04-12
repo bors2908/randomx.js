@@ -1,5 +1,5 @@
 import { type RxCacheHandle } from '../dataset/dataset'
-import { jit_detect, type JitFeature } from '../detect/detect'
+import type { JitFeature } from '../detect/detect'
 import { bc, type FromWorker, type ToWorker, type WorkerMessageInit, type WorkerMessageMine, type WorkerMessageResult } from './util'
 
 // @ts-ignore
@@ -20,6 +20,7 @@ let vm_memory!: WebAssembly.Memory
 
 let cache!: WebAssembly.Memory
 let jit_imports!: { e: { m: WebAssembly.Memory, d: RxSuperscalarHash } }
+let cache_ready = false
 
 let scratch!: Uint8Array
 let miner_id!: string
@@ -27,6 +28,14 @@ let miner_id!: string
 // if job == null, then not mining
 let job: WorkerMessageMine | null = null
 let job_mining_began: number = 0
+
+function schedule_iterate() {
+	if (ENVIRONMENT === 'browser') {
+		setTimeout(iterate, 0)
+	} else {
+		setImmediate(iterate)
+	}
+}
 
 function iterate() {
 	// job is always true here
@@ -57,7 +66,7 @@ function iterate() {
 				result: scratch.slice(0, 32), // R = Hash256()
 			}
 
-			const hash_count = vm_exports.h()
+            const hash_count = vm_exports.h()
 			bc.postMessage({
 				type: 'event_result_found',
 				minerId: miner_id,
@@ -92,18 +101,24 @@ function iterate() {
 	} satisfies FromWorker)
 
 	if (job) {
-		setImmediate(iterate)
+		schedule_iterate()
 	}
 }
 
-function message({ data }: MessageEvent<ToWorker | WorkerMessageResult>) {
+function message(data: unknown) {
+	if (!data || typeof data !== 'object' || !('type' in data)) {
+		return
+	}
+
+	const typed = data as ToWorker | WorkerMessageResult
+
 	// someone else got to it before us
-	if (data.type === 'result') {
+	if (typed.type === 'result') {
 		job = null
 	}
 	
-	if (data.type === 'init_cache') {
-		const ssh = new WebAssembly.Instance(data.thunk, {
+	if (typed.type === 'init_cache') {
+		const ssh = new WebAssembly.Instance(typed.thunk, {
 			e: {
 				m: cache
 			}
@@ -114,22 +129,25 @@ function message({ data }: MessageEvent<ToWorker | WorkerMessageResult>) {
 				d: ssh.exports.d as RxSuperscalarHash,
 			}
 		}
-		job = null
-	} else if (data.type === 'dispose') {
+		cache_ready = true
+		if (job) {
+			schedule_iterate()
+		}
+	} else if (typed.type === 'dispose') {
 		bc.postMessage({
 			type: 'event_job_disposed',
 			minerId: miner_id,
 		} satisfies FromWorker)
 		job = null
-	} else if (data.type === 'mine') {
+	} else if (typed.type === 'mine') {
 		const was_mining = !!job
 
 		job_mining_began = Date.now()
-		job = data
+		job = typed
 		const nonce_space = job.work_allocation[miner_id]
 
 		// begin mining, reinitialise everything
-		bc.postMessage({
+        bc.postMessage({
 			type: 'event_job_started',
 			minerId: miner_id,
 			jobId: job.job_id,
@@ -140,8 +158,8 @@ function message({ data }: MessageEvent<ToWorker | WorkerMessageResult>) {
 		scratch.set(job.blob)
 		vm_exports.B(job.blob.length, job.target, nonce_space.nonce, nonce_space.nonce_end)
 
-		if (!was_mining) {
-			setImmediate(iterate)
+		if (!was_mining && cache_ready) {
+			schedule_iterate()
 		}
 	}
 }
@@ -149,6 +167,7 @@ function message({ data }: MessageEvent<ToWorker | WorkerMessageResult>) {
 function init(e: WorkerMessageInit) {
 	miner_id = e.miner_id
 	cache = e.cache
+	cache_ready = false
 
 	vm_memory = new WebAssembly.Memory({ initial: wasm_pages, maximum: wasm_pages })
 	const wi_imports: Record<string, Record<string, WebAssembly.ImportValue>> = {
@@ -163,7 +182,18 @@ function init(e: WorkerMessageInit) {
 	const scratch_ptr = vm_exports.i(e.jit_feature)
 	scratch = new Uint8Array(vm_memory.buffer, scratch_ptr, 16 * 1024)
 
-	bc.onmessage = message
+	bc.onmessage = (e) => message(e.data)
+
+	// In browsers, runtime control messages (mine/init_cache/dispose) are
+	// delivered from the main thread over worker.postMessage.
+	if (ENVIRONMENT === 'browser') {
+		onmessage = (e) => message(e.data)
+	}
+
+	bc.postMessage({
+		type: 'event_worker_ready',
+		minerId: miner_id,
+	} satisfies FromWorker)
 }
 
 declare var ENVIRONMENT: 'node' | 'browser'

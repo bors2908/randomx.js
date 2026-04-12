@@ -1,5 +1,5 @@
 import { internal_create_module, internal_get_cached_vm_handle, internal_initialise, randomx_init_cache, RxCache, type DatasetModule, type RxCacheHandle } from '../dataset/dataset';
-import { bc, hex2bin, hex2target, sleep, type Config, type FromWorker, type Job, type NonceSpace, type ToWorker, type WorkerMessageInit, type WorkerMessageMine, type WorkerMessageNewCache, type WorkerPong, type StatsRow } from './util';
+import { bc, hex2bin, hex2target, sleep, type Config, type FromWorker, type Job, type NonceSpace, type ToWorker, type WorkerMessageInit, type WorkerMessageMine, type WorkerMessageNewCache, type WorkerPong } from './util';
 import { jit_detect } from '../detect/detect';
 import { nanoid } from 'nanoid';
 
@@ -10,11 +10,13 @@ import worker_url from 'url:./vm'
 import dataset_wasm, { wasm_pages as dataset_wasm_pages } from 'dataset.wasm'
 
 declare var ENVIRONMENT: 'node' | 'browser'
+let WorkerCtor: any = globalThis.Worker
 if (ENVIRONMENT !== 'browser') {
-	var Worker = require('worker_threads').Worker
+	WorkerCtor = require('worker_threads').Worker
 }
 
 const jit_feature = jit_detect()
+const worker_ready = new Set<string>()
 
 type MainState = {
 	cache_memory: WebAssembly.Memory
@@ -26,7 +28,7 @@ type MainState = {
 		rx_cache: RxCache
 	}
 
-	workers: Map<string, WorkerPong | null>
+	workers: Map<string, { postMessage: (message: unknown) => void }>
 }
 
 async function main_new_state(config: Config): Promise<MainState> {
@@ -44,12 +46,17 @@ async function main_new_state(config: Config): Promise<MainState> {
 		}
 	}
 
-	const workers = new Map<string, WorkerPong | null>()
+	const workers = new Map<string, { postMessage: (message: unknown) => void }>()
 	const vm = internal_get_cached_vm_handle()
 
+	const miner_ids: string[] = []
 	for (let i = 0; i < config.target_threads!!; i++) {
-		const worker = new Worker(worker_url)
+		const worker = ENVIRONMENT === 'browser'
+			? new WorkerCtor(worker_url, { type: 'module' })
+			: new WorkerCtor(worker_url)
 		const miner_id = nanoid()
+		miner_ids.push(miner_id)
+		worker_ready.delete(miner_id)
 
 		worker.postMessage({
 			type: 'init',
@@ -60,13 +67,39 @@ async function main_new_state(config: Config): Promise<MainState> {
 			vm,
 		} satisfies WorkerMessageInit)
 
-		workers.set(miner_id, null)
+		workers.set(miner_id, worker)
 	}
+
+	await wait_for_workers_ready(miner_ids, 5000)
 
 	return {
 		cache_memory: cache,
 		cache_exports: internal_create_module(cache),
 		workers,
+	}
+}
+
+async function wait_for_workers_ready(miner_ids: string[], timeout_ms: number) {
+	const deadline = Date.now() + timeout_ms
+	while (true) {
+		let all_ready = true
+		for (const miner_id of miner_ids) {
+			if (!worker_ready.has(miner_id)) {
+				all_ready = false
+				break
+			}
+		}
+
+		if (all_ready) {
+			return
+		}
+
+		if (Date.now() >= deadline) {
+			const missing = miner_ids.filter((id) => !worker_ready.has(id))
+			throw new Error(`timed out waiting for workers to initialise: ${missing.join(', ')}`)
+		}
+
+		await sleep(10)
 	}
 }
 
@@ -92,7 +125,13 @@ function on_job(st: MainState, job: Job) {
 
 		// we are mining again, here is a new (cache, thunk) pair derived from K.
 		// remember, thunk is the superscalar hash instance
-		bc.postMessage(message_init satisfies ToWorker)
+		if (ENVIRONMENT === 'browser') {
+			for (const worker of st.workers.values()) {
+				worker.postMessage(message_init satisfies ToWorker)
+			}
+		} else {
+			bc.postMessage(message_init satisfies ToWorker)
+		}
 	}
 
 	const blob = hex2bin(job.blob)
@@ -132,48 +171,47 @@ function on_job(st: MainState, job: Job) {
 		work_allocation,
 	}
 
-	bc.postMessage(message_mine satisfies ToWorker)
+	if (ENVIRONMENT === 'browser') {
+		for (const worker of st.workers.values()) {
+			worker.postMessage(message_mine satisfies ToWorker)
+		}
+	} else {
+		bc.postMessage(message_mine satisfies ToWorker)
+	}
 }
 
 let last_stats_time = Date.now()
 const stats = new Map<string, WorkerPong>()
 
 bc.onmessage = ({ data }: MessageEvent<FromWorker>) => {
-	if (data.type === 'event_cache_init_start') {
-		console.log(data.message)
-	} else if (data.type === 'event_cache_init_end') {
-		console.log(`${data.message}: ${data.durationMs}ms`)
-	} else if (data.type === 'event_job_started') {
-		console.log(data.minerId, `job ${data.jobId} nonce space [${data.nonceStart}, ${data.nonceEnd}), target ${data.target}`)
-	} else if (data.type === 'event_job_disposed') {
-		console.log(data.minerId, 'disposing job')
-	} else if (data.type === 'event_nonce_space_exhausted') {
-		console.log(data.minerId, `job ${data.jobId} exhausted nonce space`)
-	} else if (data.type === 'event_result_found') {
-		console.log(data.minerId, `found after ${data.hashCount} hashes, nonce ${data.nonce} result ${data.result}`)
-	} else if (data.type === 'pong') {
-		stats.set(data.miner_id, data)
-		const now = Date.now()
-		if (now - last_stats_time >= 1000) {
-			last_stats_time = now
+	if (data.type === 'event_worker_ready') {
+		worker_ready.add(data.minerId)
+	} else if (data.type === 'event_cache_init_start') {
+        console.log(data.message)
+    } else if (data.type === 'event_cache_init_end') {
+        console.log(`${data.message}: ${data.durationMs}ms`)
+    } else if (data.type === 'event_job_started') {
+        console.log(data.minerId, `job ${data.jobId} nonce space [${data.nonceStart}, ${data.nonceEnd}), target ${data.target}`)
+    } else if (data.type === 'event_job_disposed') {
+        console.log(data.minerId, 'disposing job')
+    } else if (data.type === 'event_nonce_space_exhausted') {
+        console.log(data.minerId, `job ${data.jobId} exhausted nonce space`)
+    } else if (data.type === 'event_result_found') {
+        console.log(data.minerId, `found after ${data.hashCount} hashes, nonce ${data.nonce} result ${data.result}`)
+    } else if (data.type === 'pong') {
+        stats.set(data.miner_id, data)
+        const now = Date.now()
+        if (now - last_stats_time >= 1000) {
+            last_stats_time = now
 
-			const table: StatsRow[] = []
-			for (const [k, v] of stats) {
-				table.push({
-					'miner id': k,
-					'hashes per second': `${v.stats.hashes_per_second.toLocaleString()} H/s`,
-					'total hashes': v.stats.hashes_total.toLocaleString(),
-				})
-			}
-			table.push({
-				'miner id': undefined,
-				'hashes per second': `${Array.from(stats.values()).reduce((a, b) => a + b.stats.hashes_per_second, 0).toLocaleString()} H/s`,
-				'total hashes': Array.from(stats.values()).reduce((a, b) => a + b.stats.hashes_total, 0).toLocaleString(),
-			})
+            const workerCount = stats.size
+            const totalHashrate = Array.from(stats.values()).reduce((a, b) => a + b.stats.hashes_per_second, 0)
+            const totalHashes = Array.from(stats.values()).reduce((a, b) => a + b.stats.hashes_total, 0)
+            const avgHashrate = totalHashrate / workerCount
 
-			console.table(table)
-		}
-	}
+            console.log(`Workers: ${workerCount} | Full Hashrate: ${totalHashrate.toLocaleString()} H/s | Average Worker Hashrate: ${avgHashrate.toLocaleString()} H/s | Total Hashes: ${totalHashes.toLocaleString()}`)
+        }
+    }
 }
 
 export async function mine(job: Job) {
