@@ -49,13 +49,11 @@ async function main_new_state(config: Config): Promise<MainState> {
 	const workers = new Map<string, { postMessage: (message: unknown) => void }>()
 	const vm = internal_get_cached_vm_handle()
 
-	const miner_ids: string[] = []
 	for (let i = 0; i < config.target_threads!!; i++) {
 		const worker = ENVIRONMENT === 'browser'
 			? new WorkerCtor(worker_url, { type: 'module' })
 			: new WorkerCtor(worker_url)
 		const miner_id = nanoid()
-		miner_ids.push(miner_id)
 		worker_ready.delete(miner_id)
 
 		worker.postMessage({
@@ -70,7 +68,7 @@ async function main_new_state(config: Config): Promise<MainState> {
 		workers.set(miner_id, worker)
 	}
 
-	await wait_for_workers_ready(miner_ids, 5000)
+	await wait_for_workers_ready(workers, 5000)
 
 	return {
 		cache_memory: cache,
@@ -79,11 +77,11 @@ async function main_new_state(config: Config): Promise<MainState> {
 	}
 }
 
-async function wait_for_workers_ready(miner_ids: string[], timeout_ms: number) {
+async function wait_for_workers_ready(workers: Map<string, { postMessage: (message: unknown) => void }>, timeout_ms: number) {
 	const deadline = Date.now() + timeout_ms
 	while (true) {
 		let all_ready = true
-		for (const miner_id of miner_ids) {
+		for (const miner_id of workers.keys()) {
 			if (!worker_ready.has(miner_id)) {
 				all_ready = false
 				break
@@ -95,11 +93,21 @@ async function wait_for_workers_ready(miner_ids: string[], timeout_ms: number) {
 		}
 
 		if (Date.now() >= deadline) {
-			const missing = miner_ids.filter((id) => !worker_ready.has(id))
+			const missing = Array.from(workers.keys()).filter((id) => !worker_ready.has(id))
 			throw new Error(`timed out waiting for workers to initialise: ${missing.join(', ')}`)
 		}
 
 		await sleep(10)
+	}
+}
+
+function postToWorkers(st: MainState, message: ToWorker) {
+	if (ENVIRONMENT === 'browser') {
+		for (const worker of st.workers.values()) {
+			worker.postMessage(message)
+		}
+	} else {
+		bc.postMessage(message)
 	}
 }
 
@@ -125,13 +133,7 @@ function on_job(st: MainState, job: Job) {
 
 		// we are mining again, here is a new (cache, thunk) pair derived from K.
 		// remember, thunk is the superscalar hash instance
-		if (ENVIRONMENT === 'browser') {
-			for (const worker of st.workers.values()) {
-				worker.postMessage(message_init satisfies ToWorker)
-			}
-		} else {
-			bc.postMessage(message_init satisfies ToWorker)
-		}
+		postToWorkers(st, message_init satisfies ToWorker)
 	}
 
 	const blob = hex2bin(job.blob)
@@ -152,9 +154,7 @@ function on_job(st: MainState, job: Job) {
 		let nonce_end = nonce + nonce_space
 
 		work_allocation[miner_id] = {
-			miner_id: miner_id,
-
-			nonce,
+			nonce_start: nonce,
 			nonce_end: nonce_end <= 0xffffffff ? nonce_end : 0xffffffff,
 		}
 
@@ -171,13 +171,7 @@ function on_job(st: MainState, job: Job) {
 		work_allocation,
 	}
 
-	if (ENVIRONMENT === 'browser') {
-		for (const worker of st.workers.values()) {
-			worker.postMessage(message_mine satisfies ToWorker)
-		}
-	} else {
-		bc.postMessage(message_mine satisfies ToWorker)
-	}
+	postToWorkers(st, message_mine satisfies ToWorker)
 }
 
 let last_stats_time = Date.now()
@@ -185,19 +179,15 @@ const stats = new Map<string, WorkerPong>()
 
 bc.onmessage = ({ data }: MessageEvent<FromWorker>) => {
 	if (data.type === 'event_worker_ready') {
-		worker_ready.add(data.minerId)
-	} else if (data.type === 'event_cache_init_start') {
-        console.log(data.message)
-    } else if (data.type === 'event_cache_init_end') {
-        console.log(`${data.message}: ${data.durationMs}ms`)
-    } else if (data.type === 'event_job_started') {
-        console.log(data.minerId, `job ${data.jobId} nonce space [${data.nonceStart}, ${data.nonceEnd}), target ${data.target}`)
+		worker_ready.add(data.miner_id)
+	} else if (data.type === 'event_job_started') {
+        console.log(data.miner_id, `job ${data.job_id} nonce space [${data.nonce_start}, ${data.nonce_end}), target ${data.target}`)
     } else if (data.type === 'event_job_disposed') {
-        console.log(data.minerId, 'disposing job')
+        console.log(data.miner_id, 'disposing job')
     } else if (data.type === 'event_nonce_space_exhausted') {
-        console.log(data.minerId, `job ${data.jobId} exhausted nonce space`)
+        console.log(data.miner_id, `job ${data.job_id} exhausted nonce space`)
     } else if (data.type === 'event_result_found') {
-        console.log(data.minerId, `found after ${data.hashCount} hashes, nonce ${data.nonce} result ${data.result}`)
+        console.log(data.miner_id, `found after ${data.hash_count} hashes, nonce ${data.nonce} result ${data.result}`)
     } else if (data.type === 'pong') {
         stats.set(data.miner_id, data)
         const now = Date.now()

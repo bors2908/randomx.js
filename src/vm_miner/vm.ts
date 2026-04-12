@@ -51,8 +51,8 @@ function iterate() {
 			// exhausted nonce space
 			bc.postMessage({
 				type: 'event_nonce_space_exhausted',
-				minerId: miner_id,
-				jobId: job.job_id,
+				miner_id,
+				job_id: job.job_id,
 			} satisfies FromWorker)
 			job = null
 			break outer
@@ -69,9 +69,9 @@ function iterate() {
             const hash_count = vm_exports.h()
 			bc.postMessage({
 				type: 'event_result_found',
-				minerId: miner_id,
-				jobId: job.job_id,
-				hashCount: hash_count,
+				miner_id,
+				job_id: job.job_id,
+				hash_count: hash_count,
 				nonce: result.nonce,
 				result: result.result,
 			} satisfies FromWorker)
@@ -105,12 +105,51 @@ function iterate() {
 	}
 }
 
-function message(data: unknown) {
-	if (!data || typeof data !== 'object' || !('type' in data)) {
-		return
+function hasType(data: unknown): data is { type: string } {
+	return !!data && typeof data === 'object' && 'type' in data && typeof (data as { type: unknown }).type === 'string'
+}
+
+function asInboundMessage(data: unknown): ToWorker | WorkerMessageResult | null {
+	if (!hasType(data)) {
+		return null
 	}
 
-	const typed = data as ToWorker | WorkerMessageResult
+	switch (data.type) {
+		case 'dispose':
+			return data as ToWorker
+		case 'init_cache':
+			return data as ToWorker
+		case 'mine':
+			if (
+				typeof (data as { job_id?: unknown }).job_id === 'string' &&
+				(data as { blob?: unknown }).blob instanceof Uint8Array &&
+				typeof (data as { target?: unknown }).target === 'bigint' &&
+				typeof (data as { work_allocation?: unknown }).work_allocation === 'object' &&
+				(data as { work_allocation?: unknown }).work_allocation !== null
+			) {
+				return data as ToWorker
+			}
+			return null
+		case 'result':
+			if (
+				typeof (data as { miner_id?: unknown }).miner_id === 'string' &&
+				typeof (data as { job_id?: unknown }).job_id === 'string' &&
+				typeof (data as { nonce?: unknown }).nonce === 'number' &&
+				(data as { result?: unknown }).result instanceof Uint8Array
+			) {
+				return data as WorkerMessageResult
+			}
+			return null
+		default:
+			return null
+	}
+}
+
+function message(data: unknown) {
+	const typed = asInboundMessage(data)
+	if (!typed) {
+		return
+	}
 
 	// someone else got to it before us
 	if (typed.type === 'result') {
@@ -136,7 +175,7 @@ function message(data: unknown) {
 	} else if (typed.type === 'dispose') {
 		bc.postMessage({
 			type: 'event_job_disposed',
-			minerId: miner_id,
+			miner_id,
 		} satisfies FromWorker)
 		job = null
 	} else if (typed.type === 'mine') {
@@ -145,18 +184,26 @@ function message(data: unknown) {
 		job_mining_began = Date.now()
 		job = typed
 		const nonce_space = job.work_allocation[miner_id]
+		if (!nonce_space) {
+			bc.postMessage({
+				type: 'event_job_disposed',
+				miner_id,
+			} satisfies FromWorker)
+			job = null
+			return
+		}
 
 		// begin mining, reinitialise everything
         bc.postMessage({
 			type: 'event_job_started',
-			minerId: miner_id,
-			jobId: job.job_id,
-			nonceStart: nonce_space.nonce,
-			nonceEnd: nonce_space.nonce_end,
+			miner_id,
+			job_id: job.job_id,
+			nonce_start: nonce_space.nonce_start,
+			nonce_end: nonce_space.nonce_end,
 			target: job.target,
 		} satisfies FromWorker)
 		scratch.set(job.blob)
-		vm_exports.B(job.blob.length, job.target, nonce_space.nonce, nonce_space.nonce_end)
+		vm_exports.B(job.blob.length, job.target, nonce_space.nonce_start, nonce_space.nonce_end)
 
 		if (!was_mining && cache_ready) {
 			schedule_iterate()
@@ -192,7 +239,7 @@ function init(e: WorkerMessageInit) {
 
 	bc.postMessage({
 		type: 'event_worker_ready',
-		minerId: miner_id,
+		miner_id,
 	} satisfies FromWorker)
 }
 

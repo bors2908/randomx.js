@@ -71,10 +71,8 @@ export type WorkerMessageNewCache = {
 }
 
 export type NonceSpace = {
-	miner_id: string
-	
-	// [nonce, nonce_end)
-	nonce: number
+	// [nonce_start, nonce_end)
+	nonce_start: number
 	nonce_end: number
 }
 
@@ -127,8 +125,6 @@ export type FromWorker =
 	| WorkerMessageResult
 	| WorkerPong
 	| WorkerEventWorkerReady
-	| WorkerEventCacheInitStart
-	| WorkerEventCacheInitEnd
 	| WorkerEventJobStarted
 	| WorkerEventJobDisposed
 	| WorkerEventNonceSpaceExhausted
@@ -136,45 +132,34 @@ export type FromWorker =
 
 export type WorkerEventWorkerReady = {
 	type: 'event_worker_ready'
-	minerId: string
-}
-
-export type WorkerEventCacheInitStart = {
-	type: 'event_cache_init_start'
-	message: string
-}
-
-export type WorkerEventCacheInitEnd = {
-	type: 'event_cache_init_end'
-	message: string
-	durationMs: number
+	miner_id: string
 }
 
 export type WorkerEventJobStarted = {
 	type: 'event_job_started'
-	minerId: string
-	jobId: string
-	nonceStart: number
-	nonceEnd: number
+	miner_id: string
+	job_id: string
+	nonce_start: number
+	nonce_end: number
 	target: bigint
 }
 
 export type WorkerEventJobDisposed = {
 	type: 'event_job_disposed'
-	minerId: string
+	miner_id: string
 }
 
 export type WorkerEventNonceSpaceExhausted = {
 	type: 'event_nonce_space_exhausted'
-	minerId: string
-	jobId: string
+	miner_id: string
+	job_id: string
 }
 
 export type WorkerEventResultFound = {
 	type: 'event_result_found'
-	minerId: string
-	jobId: string
-	hashCount: number
+	miner_id: string
+	job_id: string
+	hash_count: number
 	nonce: number
 	result: Uint8Array
 }
