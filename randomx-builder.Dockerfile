@@ -12,7 +12,7 @@ RUN bun run scripts/build.ts
 FROM randomx-builder AS npm-publish
 
 ARG PACKAGE_DIR=pkg-randomx.js-shared
-ARG NPM_REGISTRY=http://host.docker.internal:8081/repository/npm-hosted/
+ARG NPM_REGISTRY=http://host.docker.internal:9001/repository/npm-hosted/
 
 RUN --mount=type=secret,id=npmrc,target=/run/secrets/npmrc,required=true set -eux; \
     cd "/workspace/${PACKAGE_DIR}"; \

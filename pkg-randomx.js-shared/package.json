@@ -23,7 +23,7 @@
     "url": "git+https://github.com/l1mey112/randomx.js.git"
   },
   "publishConfig": {
-    "registry": "http://localhost:8081/repositories/npm-hosted/"
+    "registry": "http://localhost:9001/repositories/npm-hosted/"
   },
   "engines": {
     "node": ">=17"

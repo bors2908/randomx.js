@@ -6,7 +6,7 @@ BUN_IMAGE="${BUN_IMAGE:-oven/bun:1.3.12-debian}"
 BASE_IMAGE="pouw-randomx-builder-base:local"
 BUILDER_IMAGE="pouw-randomx-builder:local"
 PACKAGE_DIR="${PACKAGE_DIR:-pkg-randomx.js-shared}"
-NPM_REGISTRY="${NPM_REGISTRY:-http://host.docker.internal:8081/repository/npm-hosted/}"
+NPM_REGISTRY="${NPM_REGISTRY:-http://host.docker.internal:9001/repository/npm-hosted/}"
 LOAD_BASE_IMAGE=0
 LOAD_BUILDER_IMAGE=0
 
@@ -63,7 +63,7 @@ if [ -n "$ENV_FILE_PATH" ]; then
   set +a
 fi
 
-NPM_REGISTRY="${NPM_REGISTRY:-http://host.docker.internal:8081/repository/npm-hosted/}"
+NPM_REGISTRY="${NPM_REGISTRY:-http://host.docker.internal:9001/repository/npm-hosted/}"
 NPM_REGISTRY="$(printf '%s' "$NPM_REGISTRY" | sed 's#/repositories/#/repository/#')"
 NPM_REGISTRY="${NPM_REGISTRY%/}/"
 NPM_TOKEN="${NPM_TOKEN:-${NPM_AUTH_TOKEN:-}}"
