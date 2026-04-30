@@ -5,13 +5,17 @@
 **RandomX.js is an implementation of the ubiquitous Monero POW algorithm RandomX in JavaScript.** This package is part of a monorepo, containing NPM packages [RandomX.js](https://www.npmjs.com/package/randomx.js) ([shmem version](https://www.npmjs.com/package/randomx.js-shared)) and [RandomWOW.js](https://www.npmjs.com/package/randomwow.js) ([shmem version](https://www.npmjs.com/package/randomwow.js-shared)).
 
 ```ts
-// npm i randomx.js
-import { randomx_create_vm, randomx_init_cache } from 'randomx.js'
+// npm i randomx.js-shared
+import { randomx_create_vm, randomx_init_cache } from 'randomx.js-shared'
 
 const cache = randomx_init_cache('optional key')
 const randomx = randomx_create_vm(cache)
 
 console.log(randomx.calculate_hash('hello world')) // Uint8Array
+```
+
+```ts
+import * as randomxWeb from 'randomx.js-shared/web'
 ```
 
 > [RandomX](https://github.com/tevador/RandomX) is a proof-of-work (PoW) algorithm that is optimized for general-purpose CPUs. RandomX uses random code execution (hence the name) together with several memory-hard techniques to minimize the efficiency advantage of specialized hardware.
